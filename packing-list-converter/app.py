@@ -3,39 +3,60 @@ import pandas as pd
 from io import BytesIO
 
 def process_packing_list(file):
-    # Read Excel file
-    df = pd.read_excel(file)
-
-    # Extract SHIP TO details
     try:
-        ship_to_info = df.iloc[6, 3]
-    except:
-        ship_to_info = "SHIP TO info not found"
+        # Determine engine based on file extension
+        engine = 'openpyxl' if file.name.endswith('.xlsx') else 'xlrd'
+        
+        # Read Excel file with explicit engine
+        df = pd.read_excel(file, engine=engine)
 
-    # Extract product data starting from row 14
-    product_data = df.iloc[14:].copy()
-    product_data = product_data.rename(columns={
-        df.columns[1]: "Description",
-        df.columns[-1]: "Quantity"
-    })
-    product_data = product_data[["Description", "Quantity"]].dropna(subset=["Description"])
+        # Extract SHIP TO details with better error handling
+        try:
+            ship_to_info = str(df.iloc[6, 3])  # Convert to string in case it's not
+        except Exception as e:
+            st.warning(f"Could not extract SHIP TO info: {str(e)}")
+            ship_to_info = "SHIP TO info not found"
 
-    # Sales order details
-    sales_order_no = df.iloc[2, -1] if not pd.isna(df.iloc[2, -1]) else "Unknown"
-    sales_order_date = df.iloc[1, -1] if not pd.isna(df.iloc[1, -1]) else "Unknown"
+        # Extract product data with more robust column handling
+        product_data = df.iloc[14:].copy()
+        
+        # Safely rename columns
+        description_col = df.columns[1] if len(df.columns) > 1 else None
+        quantity_col = df.columns[-1]
+        
+        if not description_col:
+            raise ValueError("Excel file doesn't have expected columns")
+            
+        product_data = product_data.rename(columns={
+            description_col: "Description",
+            quantity_col: "Quantity"
+        })
+        
+        # Filter and clean data
+        product_data = product_data[["Description", "Quantity"]].dropna(subset=["Description"])
+        product_data = product_data[product_data["Description"].astype(str).str.strip() != ""]
 
-    # Build final output
-    output_df = pd.DataFrame()
-    output_df["description"] = product_data["Description"]
-    output_df["quantity"] = product_data["Quantity"]
-    output_df["price"] = 1
-    output_df["customer name"] = "Profit Development LLC"
-    output_df["sales order no."] = sales_order_no
-    output_df["sales order date"] = sales_order_date
-    output_df["delivery method"] = "send by us"
-    output_df["notes"] = ship_to_info
+        # Sales order details with better null handling
+        sales_order_no = str(df.iloc[2, -1]) if len(df.columns) > 0 and not pd.isna(df.iloc[2, -1]) else "Unknown"
+        sales_order_date = str(df.iloc[1, -1]) if len(df.columns) > 0 and not pd.isna(df.iloc[1, -1]) else "Unknown"
 
-    return output_df
+        # Build final output
+        output_df = pd.DataFrame({
+            "description": product_data["Description"].astype(str),
+            "quantity": pd.to_numeric(product_data["Quantity"], errors='coerce').fillna(0),
+            "price": 1,
+            "customer name": "Profit Development LLC",
+            "sales order no.": sales_order_no,
+            "sales order date": sales_order_date,
+            "delivery method": "send by us",
+            "notes": ship_to_info
+        })
+
+        return output_df
+
+    except Exception as e:
+        st.error(f"Error processing file: {str(e)}")
+        return pd.DataFrame()  # Return empty DataFrame on error
 
 def to_excel(df):
     output = BytesIO()
